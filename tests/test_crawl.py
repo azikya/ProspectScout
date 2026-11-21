@@ -159,3 +159,10 @@ def test_connected_peer_is_checked_against_private_ranges(site_server, monkeypat
     with pytest.raises(crawl.FetchError) as e:
         crawl.fetch(site_server + "/site/index.html", allow_private=False)
     assert "private" in str(e.value).lower()
+
+
+def test_quick_mode_crawl_accepts_deep_false(site_server):
+    r = crawl.crawl(site_server + "/site/index.html", max_pages=3, max_link_checks=0, allow_private=True, delay=0,
+                    deep=False)
+    assert r.reachable and len(r.pages) <= 3 and r.ssl_days_left is None and r.http_redirects_to_https is None
+    assert set(r.link_status) <= {p.final_url for p in r.pages} | {site_server + "/site/missing.html"}

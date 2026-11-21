@@ -194,7 +194,9 @@ def _page_from(url: str, r: Fetched) -> Page:
 
 
 def crawl(website: str, max_pages: int = 8, max_link_checks: int = 40, allow_private: bool = False,
-          delay: float = 0.5, timeout: int = 15, progress: Callable[[str], None] | None = None) -> CrawlResult:
+          delay: float = 0.5, timeout: int = 15, progress: Callable[[str], None] | None = None,
+          deep: bool = True) -> CrawlResult:
+    """deep=False (Quick Prospect) skips the SSL-expiry and HTTP→HTTPS probes for speed."""
     say = progress or (lambda _msg: None)
     start = website.strip()
     if "://" not in start:
@@ -273,7 +275,7 @@ def crawl(website: str, max_pages: int = 8, max_link_checks: int = 40, allow_pri
             result.link_status[u] = status
 
     host = urlparse(home.final_url).hostname or ""
-    if result.https:
+    if result.https and deep:
         result.ssl_days_left = _ssl_days_left(host)
         try:
             plain = fetch(f"http://{urlparse(home.final_url).netloc}/", timeout=timeout,
