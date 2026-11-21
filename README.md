@@ -33,6 +33,11 @@ you can see.
 5. **Creates a free 1-page Opportunity Report** (print to PDF) to send when they reply, plus a
    private **call-prep sheet** with solutions, questions and likely objections.
 6. **Suggests when to send**, per channel, in the prospect's timezone and yours.
+7. **Quick Prospect**: paste one website and get a ChatGPT-style answer that streams in live. A first
+   look appears within seconds, then the verdict for a Sales Navigator connection request: worth
+   connecting/maybe/skip with a score, buying intent (buying now vs. partnership potential), who to
+   contact, and a ready connection note. Company facts, buying signals with sources, and what to pitch
+   follow below. About a minute per check; "Add to Prospects" sends it to the full research.
 
 **Nothing is sent automatically.** Messages are copied and sent by a person, in line with
 LinkedIn's and WhatsApp's rules.
