@@ -55,3 +55,17 @@ def test_settings_expose_sop_logo_signature_and_spacing():
 def test_rerun_asks_for_confirmation():
     js = (UI / "app.js").read_text(encoding="utf-8")
     assert "confirm(" in js and "Re-run research" in js and "haven't contacted" in js
+
+
+def test_quick_prospect_tab_wired():
+    js = (UI / "app.js").read_text(encoding="utf-8")
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    assert 'id="view-quick"' in html and 'data-view="quick"' in html and "Quick Prospect" in html
+    for s in ("/api/quick", "function mdToNodes", "function renderQuick", "since="):
+        assert s in js, s
+
+
+def test_markdown_renderer_is_safe():
+    js = (UI / "app.js").read_text(encoding="utf-8")
+    body = js[js.index("function inlineNodes"):js.index("function mdSections")]  # inline + block renderer
+    assert "function mdToNodes" in body and "innerHTML" not in body and "safeUrl(" in body

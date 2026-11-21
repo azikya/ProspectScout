@@ -39,6 +39,10 @@ CREATE TABLE IF NOT EXISTS contacts (
     status TEXT NOT NULL DEFAULT 'ready', messages_json TEXT, messages_status TEXT DEFAULT 'pending',
     outreach_status TEXT DEFAULT 'new', contacted_at INTEGER, manual_signals_json TEXT,
     created_at INTEGER, updated_at INTEGER);
+CREATE TABLE IF NOT EXISTS quick_checks (
+    id INTEGER PRIMARY KEY, url TEXT, domain TEXT, status TEXT NOT NULL DEFAULT 'running',
+    snapshot_json TEXT, markdown TEXT, steps_json TEXT, verdict_json TEXT, problems_json TEXT, error TEXT,
+    created_at INTEGER, updated_at INTEGER);
 CREATE INDEX IF NOT EXISTS idx_contacts_company ON contacts(company_id);
 CREATE INDEX IF NOT EXISTS idx_companies_status ON companies(status);
 """
@@ -252,6 +256,36 @@ def reset_in_progress(conn: sqlite3.Connection) -> int:
         cur = conn.execute("UPDATE companies SET status='queued', stage=NULL WHERE status IN ('crawling','analyzing')")
         cur2 = conn.execute("UPDATE contacts SET messages_status='pending' WHERE messages_status='writing'")
         return cur.rowcount + cur2.rowcount
+
+
+# -- quick checks (Quick Prospect tab) ------------------------------------------------------------
+
+def create_quick(conn: sqlite3.Connection, url: str, domain: str) -> int:
+    now = _now()
+    with _LOCK, conn:
+        cur = conn.execute("INSERT INTO quick_checks(url, domain, status, created_at, updated_at) VALUES (?,?,?,?,?)",
+                           (url, domain, "running", now, now))
+        return int(cur.lastrowid)
+
+
+def update_quick(conn: sqlite3.Connection, quick_id: int, **fields) -> None:
+    _update(conn, "quick_checks", quick_id, fields)
+
+
+def get_quick(conn: sqlite3.Connection, quick_id: int) -> dict | None:
+    return _decode(conn.execute("SELECT * FROM quick_checks WHERE id=?", (quick_id,)).fetchone())
+
+
+def list_quick(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
+    rows = conn.execute("SELECT id, url, domain, status, verdict_json, error, created_at FROM quick_checks "
+                        "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    return [_decode(r) for r in rows]
+
+
+def reset_running_quick(conn: sqlite3.Connection) -> int:
+    with _LOCK, conn:
+        return conn.execute("UPDATE quick_checks SET status='failed', error='Interrupted by a restart. Run it again.' "
+                            "WHERE status='running'").rowcount
 
 
 def delete_contact(conn: sqlite3.Connection, contact_id: int) -> None:

@@ -113,3 +113,23 @@ def test_set_contact_website_attaches_company(conn):
     c = db.get_contact(conn, r["contact_id"])
     assert out["company_new"] and c["status"] == "ready" and c["company_id"] == out["company_id"]
     assert db.get_company(conn, out["company_id"])["status"] == "queued"
+
+
+# --- quick checks ----------------------------------------------------------------------------
+
+def test_quick_check_roundtrip_and_listing(conn):
+    a = db.create_quick(conn, "https://acme.com", "acme.com")
+    b = db.create_quick(conn, "https://acme.com", "acme.com")
+    db.update_quick(conn, a, status="done", markdown="## Verdict\n**Maybe** · 5/10", verdict_json={"label": "maybe"},
+                    steps_json=["Searching: acme"])
+    got = db.get_quick(conn, a)
+    assert got["status"] == "done" and got["verdict_json"] == {"label": "maybe"} and got["steps_json"] == ["Searching: acme"]
+    rows = db.list_quick(conn)
+    assert [r["id"] for r in rows] == [b, a] and "markdown" not in rows[0]
+
+
+def test_reset_running_quick_marks_failed(conn):
+    q = db.create_quick(conn, "https://acme.com", "acme.com")
+    assert db.reset_running_quick(conn) == 1
+    got = db.get_quick(conn, q)
+    assert got["status"] == "failed" and "interrupted" in got["error"].lower()

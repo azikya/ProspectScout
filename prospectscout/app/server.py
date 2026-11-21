@@ -199,6 +199,26 @@ class Handler(BaseHTTPRequestHandler):
     def worker(self):
         return self.server.worker  # type: ignore[attr-defined]
 
+    @property
+    def quick(self):
+        return self.server.quick  # type: ignore[attr-defined]
+
+    def _quick_view(self, conn, qid: int, since: int) -> dict:
+        row = db.get_quick(conn, qid)
+        if not row:
+            raise ApiError(404, "not found")
+        live = self.quick.live(qid) if self.quick else None
+        text = (live or {}).get("text") if live else (row.get("markdown") or "")
+        text = text or ""
+        src = live or {}
+        return {"id": qid, "url": row["url"], "domain": row["domain"], "status": src.get("status") or row["status"],
+                "text": text[max(0, since):], "length": len(text),
+                "steps": src.get("steps") if live else (row.get("steps_json") or []),
+                "snapshot": src.get("snapshot") if live else row.get("snapshot_json"),
+                "verdict": src.get("verdict") if live else row.get("verdict_json"),
+                "problems": src.get("problems") if live else (row.get("problems_json") or []),
+                "error": src.get("error") if live else (row.get("error") or "")}
+
     # responses
     def _send(self, status: int, body: bytes, ctype: str, extra: dict | None = None):
         self.send_response(status)
@@ -353,6 +373,12 @@ class Handler(BaseHTTPRequestHandler):
                     "counts": db.counts(conn), "rows": _rows(conn, settings),
                     "settings_ready": bool(sender.get("name")),
                 })
+            if path == "/api/quick":
+                return self._json({"checks": db.list_quick(conn)})
+            m = re.fullmatch(r"/api/quick/(\d+)", path)
+            if m:
+                since = (query.get("since") or ["0"])[0]
+                return self._json(self._quick_view(conn, int(m.group(1)), int(since) if since.isdigit() else 0))
             if path == "/api/stats":
                 version = _data_version(conn)
                 cached = self.server.stats_cache  # type: ignore[attr-defined]
@@ -387,6 +413,21 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(_public_settings(config.update(_clean_settings_patch(body))))
         if path == "/api/test_claude":
             return self._json(claude_runner.test_connection())
+        if path == "/api/quick":
+            if not self.quick:
+                raise ApiError(503, "Quick Prospect isn't running.")
+            try:
+                return self._json({"id": self.quick.start(str(body.get("url") or ""))})
+            except ValueError as exc:
+                raise ApiError(400, str(exc)) from exc
+        m = re.fullmatch(r"/api/quick/(\d+)/add", path)
+        if m:
+            row = db.get_quick(conn, int(m.group(1)))
+            if not row:
+                raise ApiError(404, "not found")
+            snap = row.get("snapshot_json") or {}
+            return self._json(db.add_contact(conn, {"company_domain": row["domain"], "website": row["url"],
+                                                    "company_name": (snap.get("title") or "")[:80] or None}))
         if path == "/api/add_one":
             fields = {k: v for k, v in (body.get("fields") or {}).items()
                       if k in importer.FIELDS or k in importer.EXTRA_FIELDS}
@@ -494,10 +535,11 @@ class _Server(ThreadingHTTPServer):
         self.server_name, self.server_port = "localhost", self.server_address[1]
 
 
-def make_server(host: str, port: int, db_path: str, worker) -> ThreadingHTTPServer:
+def make_server(host: str, port: int, db_path: str, worker, quick=None) -> ThreadingHTTPServer:
     httpd = _Server((host, port), Handler)
     httpd.db_path = db_path  # type: ignore[attr-defined]
     httpd.worker = worker  # type: ignore[attr-defined]
+    httpd.quick = quick  # type: ignore[attr-defined]
     httpd.login_failures = {}  # type: ignore[attr-defined]
     httpd.stats_cache = None  # type: ignore[attr-defined]
     return httpd
@@ -506,6 +548,7 @@ def make_server(host: str, port: int, db_path: str, worker) -> ThreadingHTTPServ
 def main(argv=None) -> None:
     import argparse
 
+    from .quick_runner import QuickRunner
     from .worker import Worker
 
     p = argparse.ArgumentParser(prog="prospectscout", description="ProspectScout: website-audit prospecting")
@@ -518,7 +561,7 @@ def main(argv=None) -> None:
     db.connect(db_path).close()
     worker = Worker(db_path)
     worker.start()
-    httpd = make_server(args.host, args.port, db_path, worker)
+    httpd = make_server(args.host, args.port, db_path, worker, quick=QuickRunner(db_path))
     url = f"http://{args.host}:{args.port}/"
     print(f"\n  ProspectScout is running at {url}")
     print("  Messages are never sent automatically. Press Ctrl+C to stop.\n")

@@ -317,3 +317,72 @@ def test_early_rejections_never_reset_the_connection(srv, monkeypatch):
     monkeypatch.setenv("PROSPECTSCOUT_PASSWORD", "s3cretpass")
     codes += [call(base, "POST", "/api/settings", body)[0] for _ in range(5)]
     assert set(codes[:25]) == {415} and set(codes[25:35]) == {403} and set(codes[35:]) == {401}
+
+
+# --- Quick Prospect API ----------------------------------------------------------------------
+
+class FakeQuick:
+    def __init__(self, path):
+        self.path = path
+        self.texts = {}
+
+    def start(self, url):
+        from prospectscout.core import importer
+        domain = importer.normalize_domain(url)
+        if not domain:
+            raise ValueError("Enter the company's own website")
+        qid = db.create_quick(db.connect(self.path), importer.normalize_website(url), domain)
+        self.texts[qid] = "## First look\nHello"
+        return qid
+
+    def live(self, qid):
+        if qid not in self.texts:
+            return None
+        return {"text": self.texts[qid], "steps": ["Reading the website"], "status": "running",
+                "snapshot": {"title": "Acme"}, "verdict": None, "problems": [], "error": ""}
+
+
+@pytest.fixture
+def qsrv(tmp_path):
+    path = str(tmp_path / "q.db")
+    fake = FakeQuick(path)
+    db.connect(path).close()
+    httpd = server.make_server("127.0.0.1", 0, path, None, quick=fake)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}", fake, path
+    httpd.shutdown()
+
+
+def test_quick_start_poll_list_add(qsrv):
+    base, fake, path = qsrv
+    s, j = call(base, "POST", "/api/quick", {"url": "acme.com"})
+    assert s == 200 and j["id"]
+    qid = j["id"]
+    s, p = call(base, "GET", f"/api/quick/{qid}?since=0")
+    assert p["text"] == "## First look\nHello" and p["length"] == 19 and p["status"] == "running"
+    assert p["steps"] == ["Reading the website"] and p["snapshot"]["title"] == "Acme"
+    fake.texts[qid] += "\n\n## Verdict"
+    assert call(base, "GET", f"/api/quick/{qid}?since=19")[1]["text"] == "\n\n## Verdict"
+    assert call(base, "GET", "/api/quick")[1]["checks"][0]["domain"] == "acme.com"
+    s, added = call(base, "POST", f"/api/quick/{qid}/add")
+    assert s == 200 and added["company_new"] is True
+
+
+def test_quick_bad_url_and_missing(qsrv):
+    base, _, _ = qsrv
+    assert call(base, "POST", "/api/quick", {"url": "not a site"})[0] == 400
+    assert call(base, "GET", "/api/quick/999")[0] == 404
+
+
+def test_quick_done_check_served_from_storage(qsrv):
+    base, fake, path = qsrv
+    qid = db.create_quick(db.connect(path), "https://b.com", "b.com")
+    db.update_quick(db.connect(path), qid, status="done", markdown="## Verdict\n**Skip** · 2/10",
+                    verdict_json={"label": "skip", "score": 2.0, "text": "Skip · 2/10"}, steps_json=["x"])
+    p = call(base, "GET", f"/api/quick/{qid}")[1]
+    assert p["status"] == "done" and p["verdict"]["label"] == "skip" and p["text"].startswith("## Verdict")
+
+
+def test_quick_without_runner_is_503(srv):
+    base, _ = srv
+    assert call(base, "POST", "/api/quick", {"url": "acme.com"})[0] == 503

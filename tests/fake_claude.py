@@ -44,6 +44,27 @@ def main():
     if mode == "sleep":
         time.sleep(5)
         out(result("late"))
+    if mode in ("stream_ok", "stream_usage"):
+        def emit(obj):
+            sys.stdout.write(json.dumps(obj) + "\n")
+            sys.stdout.flush()
+        emit({"type": "system", "subtype": "init"})
+        if mode == "stream_usage":
+            emit({"type": "result", "subtype": "error", "is_error": True, "result": "Claude AI usage limit reached|1"})
+            sys.exit(1)
+        emit({"type": "stream_event", "event": {"type": "content_block_start", "index": 0,
+                                                "content_block": {"type": "text", "text": ""}}})
+        emit({"type": "stream_event", "event": {"type": "content_block_delta", "index": 0,
+                                                "delta": {"type": "text_delta", "text": "## First look\nHello"}}})
+        emit({"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "## First look\nHello"},
+            {"type": "tool_use", "name": "WebSearch", "input": {"query": "q"}}]}})
+        emit({"type": "stream_event", "event": {"type": "content_block_start", "index": 0,
+                                                "content_block": {"type": "text", "text": ""}}})
+        emit({"type": "stream_event", "event": {"type": "content_block_delta", "index": 0,
+                                                "delta": {"type": "text_delta", "text": "## Verdict\nworld"}}})
+        emit({"type": "result", "subtype": "success", "is_error": False, "result": "## Verdict\nworld"})
+        sys.exit(0)
     if mode == "echo":
         with open(os.environ["FAKE_CLAUDE_OUT"], "w", encoding="utf-8") as fh:
             json.dump({"stdin": prompt, "cwd": os.getcwd(), "argv": argv}, fh)

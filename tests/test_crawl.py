@@ -159,3 +159,34 @@ def test_connected_peer_is_checked_against_private_ranges(site_server, monkeypat
     with pytest.raises(crawl.FetchError) as e:
         crawl.fetch(site_server + "/site/index.html", allow_private=False)
     assert "private" in str(e.value).lower()
+
+
+def test_quick_mode_crawl_accepts_deep_false(site_server):
+    r = crawl.crawl(site_server + "/site/index.html", max_pages=3, max_link_checks=0, allow_private=True, delay=0,
+                    deep=False)
+    assert r.reachable and len(r.pages) <= 3 and r.ssl_days_left is None and r.http_redirects_to_https is None
+    assert set(r.link_status) <= {p.final_url for p in r.pages} | {site_server + "/site/missing.html"}
+
+
+# --- compressed responses (found live on a real site that always sends gzip) -----------------
+
+def test_gzip_response_is_decompressed(site_server):
+    r = crawl.crawl(site_server + "/gzipped", allow_private=True, delay=0, max_link_checks=0)
+    assert r.pages[0].title == "Gzip Co" and "Compressed hello" in r.pages[0].text
+
+
+def test_gzip_without_header_is_detected(site_server):
+    r = crawl.crawl(site_server + "/gzip-noheader", allow_private=True, delay=0, max_link_checks=0)
+    assert r.pages[0].title == "Gzip Co"
+
+
+def test_unsupported_compression_is_skipped_not_garbage(site_server):
+    r = crawl.crawl(site_server + "/brotli", allow_private=True, delay=0, max_link_checks=0)
+    assert not r.pages and r.skipped and "br" in r.skipped[0]["content_type"]
+
+
+def test_gzip_bomb_is_capped():
+    import gzip
+    bomb = gzip.compress(b"<p>" + b"a" * (30 * 1024 * 1024) + b"</p>")
+    out = crawl._decompress(bomb, "gzip")
+    assert out is not None and len(out) <= crawl.MAX_BYTES
