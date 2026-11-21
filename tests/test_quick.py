@@ -56,3 +56,8 @@ def test_step_labels():
     assert quick.step_label("WebSearch", {"query": "HealthWare news"}) == "Searching: HealthWare news"
     assert quick.step_label("WebFetch", {"url": "https://a.com/b"}) == "Reading a.com/b"
     assert quick.step_label("Other", {}) == "Working (Other)"
+
+
+def test_prompt_caps_research_for_speed():
+    p = quick.build_quick_prompt(config.load(), "https://a.com", {"reachable": True}, "2026-11-21")
+    assert f"at most {quick.MAX_LOOKUPS} web" in p

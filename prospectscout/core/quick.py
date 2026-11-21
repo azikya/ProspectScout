@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from .analyze import BANNED, _company_block
 
 NOTE_LIMIT = 300
+MAX_LOOKUPS = 6  # web searches + page reads; keeps a quick check to about a minute
 _PHONE = re.compile(r"\+\d[\d\s().-]{7,}\d|\b0\d{2,4}[\s.-]?\d{3,4}[\s.-]?\d{3,4}\b|\(\d{2,5}\)\s?\d{3,4}[\s.-]?\d{3,4}")
 
 # Plain string (not an f-string) so the markdown examples can contain braces safely.
@@ -22,9 +23,10 @@ honest qualification, like an experienced colleague would, with the most importa
 ORDER OF WORK (important, the reader watches your answer appear live):
 1. BEFORE using any tool, immediately write the "## First look" section: 2-3 lines based only on the website
    snapshot below (what they do, who they serve, first impression of fit).
-2. Then research with WebSearch and WebFetch: company size, location, year founded, LinkedIn company page, recent
-   news, partnerships, funding, product launches, hiring (especially engineering, QA, AI or integration roles),
-   and leadership (names and titles) from the company site, LinkedIn or business directories.
+2. Then research with WebSearch and WebFetch, using at most __MAX_LOOKUPS__ web searches and page reads in total
+   (this is a QUICK check; speed matters more than completeness). Prioritise, in order: recent news/partnerships/
+   funding/launches; leadership names and titles; company size and LinkedIn page; hiring of engineering, QA, AI or
+   integration roles. Combine topics into one search where you can. Stop researching once you can decide.
 3. Then write the final answer in EXACTLY this structure:
 
 ## Verdict
@@ -74,7 +76,7 @@ def build_quick_prompt(settings: dict, url: str, snapshot: dict, today: str) -> 
     facts = "\n".join(f"- {f}" for f in snap.get("facts") or [])
     text = (snap.get("text") or "")[:6000]
     lines = [
-        QUICK_PLAYBOOK,
+        QUICK_PLAYBOOK.replace("__MAX_LOOKUPS__", str(MAX_LOOKUPS)),
         "=== OUR COMPANY ===\n" + _company_block(settings),
         f"=== THE WEBSITE TO QUALIFY ===\n{url}",
         "=== WEBSITE SNAPSHOT (from our own quick fetch) ===\n"
