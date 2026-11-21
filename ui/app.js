@@ -684,6 +684,214 @@ async function commitImport(e) {
   } catch (err) { toast(err.message, true); btn.disabled = false; }
 }
 
+/* ---------------------------------------------------------------- quick prospect */
+const Q = { id: null, text: "", status: "", steps: [], snapshot: null, verdict: null, problems: [], error: "",
+  url: "", domain: "", started: 0, timer: null, resultEl: null, listEl: null, input: null };
+const VERDICT_LABEL = { worth: "Worth connecting", maybe: "Maybe", skip: "Skip" };
+
+function inlineNodes(text) {
+  const out = [], re = /(\*\*[^*]+\*\*|\[[^\]]+\]\([^)\s]+\)|`[^`]+`|\*[^*\s][^*]*\*)/g;
+  let last = 0, m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const t = m[0];
+    if (t.startsWith("**")) out.push(h("strong", { text: t.slice(2, -2) }));
+    else if (t.startsWith("[")) {
+      const mm = t.match(/^\[([^\]]+)\]\(([^)\s]+)\)$/), href = mm && safeUrl(mm[2]);
+      out.push(href ? h("a", { href, target: "_blank", rel: "noopener", text: mm[1] }) : (mm ? mm[1] : t));
+    } else if (t.startsWith("`")) out.push(h("code", { text: t.slice(1, -1) }));
+    else out.push(h("em", { text: t.slice(1, -1) }));
+    last = m.index + t.length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+/* Minimal, safe markdown → DOM (headings, paragraphs, lists, tables, quotes, bold/italic/code/links). */
+function mdToNodes(md) {
+  const lines = String(md || "").replace(/\r/g, "").split("\n"), out = [];
+  const isBlock = (t) => /^(#{1,4}\s|\||>|[-*]\s|\d+[.)]\s)/.test(t);
+  let i = 0;
+  while (i < lines.length) {
+    const t = lines[i].trim();
+    if (!t) { i++; continue; }
+    let m;
+    if ((m = t.match(/^(#{1,4})\s+(.*)$/))) { out.push(h(m[1].length <= 2 ? "h3" : "h4", {}, inlineNodes(m[2]))); i++; continue; }
+    if (t.startsWith("|")) {
+      const rows = [];
+      while (i < lines.length && lines[i].trim().startsWith("|")) { rows.push(lines[i].trim()); i++; }
+      const parsed = rows.map(r => r.replace(/^\||\|$/g, "").split("|").map(c => c.trim()))
+        .filter(cs => !cs.every(c => /^:?-{2,}:?$/.test(c)));
+      if (parsed.length) {
+        const [head, ...rest] = parsed;
+        out.push(h("table", {}, h("thead", {}, h("tr", {}, head.map(c => h("th", {}, inlineNodes(c))))),
+          h("tbody", {}, rest.map(r => h("tr", {}, r.map(c => h("td", {}, inlineNodes(c))))))));
+      }
+      continue;
+    }
+    if (t.startsWith(">")) {
+      const q = [];
+      while (i < lines.length && lines[i].trim().startsWith(">")) { q.push(lines[i].trim().replace(/^>\s?/, "")); i++; }
+      out.push(h("blockquote", {}, inlineNodes(q.join(" "))));
+      continue;
+    }
+    if (/^([-*]|\d+[.)])\s+/.test(t)) {
+      const ordered = /^\d/.test(t), items = [];
+      while (i < lines.length && /^\s*([-*]|\d+[.)])\s+/.test(lines[i])) { items.push(lines[i].trim().replace(/^([-*]|\d+[.)])\s+/, "")); i++; }
+      out.push(h(ordered ? "ol" : "ul", {}, items.map(it => h("li", {}, inlineNodes(it)))));
+      continue;
+    }
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !(para.length && isBlock(lines[i].trim()))) { para.push(lines[i].trim()); i++; }
+    out.push(h("p", {}, inlineNodes(para.join(" "))));
+  }
+  return out;
+}
+
+function mdSections(md) {
+  const parts = [];
+  let cur = { title: "", body: [] };
+  for (const line of String(md || "").split("\n")) {
+    const m = line.match(/^##\s+(.+?)\s*$/);
+    if (m) { if (cur.title || cur.body.join("").trim()) parts.push(cur); cur = { title: m[1], body: [] }; }
+    else cur.body.push(line);
+  }
+  parts.push(cur);
+  return parts.filter(p => p.title || p.body.join("").trim()).map(p => ({ title: p.title, body: p.body.join("\n") }));
+}
+
+function verdictFrom(body) {
+  const lines = body.split("\n"), idx = lines.findIndex(l => l.trim());
+  const first = idx >= 0 ? lines[idx] : "";
+  const lm = first.match(/\*\*\s*(worth connecting|maybe|skip)\s*\*\*/i), sm = first.match(/(\d+(?:\.\d+)?)\s*\/\s*10/);
+  return { label: lm ? ({ "worth connecting": "worth", maybe: "maybe", skip: "skip" })[lm[1].toLowerCase()] : null,
+    score: sm ? sm[1] : null, rest: lm ? lines.slice(idx + 1).join("\n") : body };
+}
+
+function renderQuick() {
+  const root = $("#view-quick");
+  Q.input = h("input", { type: "text", inputmode: "url", placeholder: "Paste a company website, e.g. healthwaresystems.com",
+    "aria-label": "Company website", value: Q.url || "" });
+  const btn = h("button", { class: "btn primary", type: "submit" }, icon("search"), "Check");
+  const form = h("form", { class: "quick-form", onsubmit: (e) => { e.preventDefault(); startQuick(Q.input.value, btn); } },
+    h("div", { style: "flex:1" }, Q.input), btn);
+  Q.resultEl = h("div");
+  Q.listEl = h("div", { class: "recent" });
+  root.replaceChildren(h("div", { class: "quick-grid" },
+    h("div", { class: "grid" },
+      h("div", { class: "card" }, h("h2", { text: "Is this company worth a LinkedIn connection?" }),
+        h("p", { class: "sub", text: "Paste a website. The answer appears as it's written: a first look within seconds, then the verdict, buying intent, who to contact and a ready connection note." }),
+        form),
+      Q.resultEl),
+    h("div", { class: "card" }, h("h2", { text: "Recent checks" }), Q.listEl)));
+  paintQuick();
+  loadQuickList();
+}
+
+async function startQuick(url, btn) {
+  if (!url.trim()) return toast("Paste a website first.", true);
+  btn.disabled = true;
+  try {
+    const r = await api("/api/quick", { url: url.trim() });
+    history.replaceState(null, "", `#/quick/${r.id}`);
+    openQuick(r.id);
+    loadQuickList();
+  } catch (e) { toast(e.message, true); }
+  finally { btn.disabled = false; }
+}
+
+function openQuick(id) {
+  clearInterval(Q.timer);
+  Object.assign(Q, { id, text: "", status: "running", steps: [], snapshot: null, verdict: null, problems: [], error: "", started: Date.now() });
+  paintQuick();
+  pollQuick();
+  Q.timer = setInterval(pollQuick, 500);
+}
+
+async function pollQuick() {
+  const id = Q.id;
+  if (!id) return;
+  try {
+    const r = await api(`/api/quick/${id}?since=${Q.text.length}`);
+    if (id !== Q.id) return;
+    if (r.length < Q.text.length) Q.text = "";
+    Q.text += r.text;
+    Object.assign(Q, { status: r.status, steps: r.steps || [], snapshot: r.snapshot, verdict: r.verdict,
+      problems: r.problems || [], error: r.error, url: r.url, domain: r.domain });
+    if (r.status === "done" || r.status === "failed") { clearInterval(Q.timer); Q.timer = null; loadQuickList(); }
+    paintQuick();
+  } catch (e) { /* transient; keep polling */ }
+}
+
+async function loadQuickList() {
+  if (!Q.listEl) return;
+  try {
+    const { checks } = await api("/api/quick");
+    Q.listEl.replaceChildren(...(checks.length ? checks.map(c => {
+      const v = c.verdict_json || {};
+      return h("button", { type: "button", class: c.id === Q.id ? "on" : "", onclick: () => { history.replaceState(null, "", `#/quick/${c.id}`); openQuick(c.id); } },
+        h("span", {}, h("div", { class: "cell-main", text: c.domain }), h("div", { class: "cell-sub", text: new Date(c.created_at * 1000).toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) })),
+        c.status === "running" ? h("span", { class: "stage" }, h("span", { class: "dot busy" }), "checking")
+          : c.status === "failed" ? h("span", { class: "chip bad", text: "failed" })
+            : h("span", { class: "chip " + (v.label || ""), text: `${VERDICT_LABEL[v.label] || "Done"}${v.score != null ? " · " + v.score : ""}` }));
+    }) : [h("p", { class: "muted", style: "margin:0", text: "Your checks will appear here." })]));
+  } catch (e) { /* ignore */ }
+}
+
+function paintQuick() {
+  const el = Q.resultEl;
+  if (!el) return;
+  if (!Q.id) { el.replaceChildren(); return; }
+  const running = Q.status === "running" || Q.status === "queued";
+  const secs = Math.max(0, Math.round((Date.now() - Q.started) / 1000));
+  const out = [];
+  out.push(h("div", { class: "q-status" }, running ? h("span", { class: "dot busy" }) : icon(Q.status === "failed" ? "alert" : "check"),
+    running ? `Checking ${Q.domain || "the website"}… ${secs}s` : Q.status === "failed" ? "The check didn't finish" : `Checked ${Q.domain}`));
+  if (Q.snapshot && (Q.snapshot.title || Q.snapshot.description))
+    out.push(h("p", { class: "q-snap", text: [Q.snapshot.title, Q.snapshot.description].filter(Boolean).join(" · ") }));
+  if (Q.error) out.push(h("div", { class: "banner bad" }, icon("alert"), h("span", { class: "grow", text: Q.error })));
+
+  const sections = mdSections(Q.text);
+  const verdict = sections.find(s => /^verdict/i.test(s.title));
+  const rest = sections.filter(s => s !== verdict && !/^first look/i.test(s.title));
+  let note = "";
+  if (verdict) {
+    const v = verdictFrom(verdict.body);
+    const label = (Q.verdict && Q.verdict.label && Q.verdict.label !== "unknown") ? Q.verdict.label : v.label;
+    const score = (Q.verdict && Q.verdict.score != null) ? Q.verdict.score : v.score;
+    const lines = v.rest.split("\n");
+    note = lines.filter(l => l.trim().startsWith(">")).map(l => l.trim().replace(/^>\s?/, "")).join(" ").trim();
+    const body = lines.filter(l => !l.trim().startsWith(">")).join("\n");
+    out.push(h("div", { class: "verdict-box " + (label || "") },
+      h("div", { class: "verdict-head" }, h("span", { class: "big", text: VERDICT_LABEL[label] || "Verdict" }),
+        score != null ? h("span", { class: "scorebig", text: `${score}/10` }) : null),
+      h("div", { class: "md" }, mdToNodes(body)),
+      note ? h("div", { class: "note-box" }, h("p", { text: note }),
+        h("div", { class: "row" }, h("span", { class: "cell-sub " + (note.length > 300 ? "over" : ""), text: `${note.length} / 300 characters` }),
+          h("span", { class: "spacer" }),
+          h("button", { class: "btn small primary", type: "button", onclick: () => copyText(note, "Connection note") }, icon("copy"), "Copy note"))) : null));
+  } else {
+    const first = sections.find(s => /^first look/i.test(s.title));
+    if (first) out.push(h("div", { class: "card section" }, h("h3", { text: "First look" }),
+      h("div", { class: "md" + (running ? " cursor" : "") }, mdToNodes(first.body))));
+    else if (running) out.push(h("div", { class: "card section muted", text: "Reading the website and preparing a first look…" }));
+  }
+  if (Q.problems && Q.problems.length) out.push(h("div", { class: "banner" }, icon("alert"),
+    h("span", { class: "grow", text: `Check before using: ${Q.problems.join(" ")}` })));
+  if (Q.steps && Q.steps.length) out.push(h("details", { class: "card section", open: running ? "" : null },
+    h("summary", { text: running ? `Researching… (${Q.steps.length} steps)` : `Research steps (${Q.steps.length})` }),
+    h("ol", { class: "q-steps" }, Q.steps.map(s => h("li", { text: s })))));
+  rest.forEach((s, idx) => out.push(h("div", { class: "card section" }, s.title ? h("h3", { text: s.title }) : null,
+    h("div", { class: "md" + (running && idx === rest.length - 1 ? " cursor" : "") }, mdToNodes(s.body)))));
+  if (!running && Q.status === "done") out.push(h("div", { class: "row" },
+    note ? h("button", { class: "btn", type: "button", onclick: () => copyText(note, "Connection note") }, icon("copy"), "Copy connection note") : null,
+    h("button", { class: "btn navy", type: "button", onclick: async () => {
+      try { const r = await api(`/api/quick/${Q.id}/add`, {}); toast(r.duplicate ? "Already in your prospects." : "Added to Prospects. Full research has started."); refresh(); }
+      catch (e) { toast(e.message, true); } } }, icon("plus"), "Add to Prospects (full research)"),
+    h("button", { class: "btn ghost", type: "button", onclick: () => { Q.input.value = ""; Q.input.focus(); } }, "Check another")));
+  el.replaceChildren(...out);
+}
+
 /* ---------------------------------------------------------------- settings */
 function renderSettings() {
   const root = $("#view-settings");
@@ -787,19 +995,22 @@ async function autoTimezone() {
 }
 
 /* ---------------------------------------------------------------- routing & polling */
-const TITLES = { dashboard: "Dashboard", prospects: "Prospects", add: "Add prospects", settings: "Settings" };
+const TITLES = { dashboard: "Dashboard", quick: "Quick Prospect", prospects: "Prospects", add: "Add prospects", settings: "Settings" };
 function route() {
   const hash = location.hash || "#/dashboard";
   const m = hash.match(/^#\/prospect\/(\d+)(?:\/(\w+))?/);
+  const qm = hash.match(/^#\/quick\/(\d+)/);
   if (m && m[2]) S.tab = m[2];
   let view = (hash.match(/^#\/(\w+)/) || [])[1] || "dashboard";
-  if (m) view = S.view && S.view !== "settings" && S.view !== "add" ? S.view : "prospects";
+  if (m) view = S.view && !["settings", "add", "quick"].includes(S.view) ? S.view : "prospects";
   if (!TITLES[view]) view = "dashboard";
+  const sameQuickView = view === "quick" && S.view === "quick" && Q.listEl;
   S.view = view;
   document.querySelectorAll(".nav a").forEach(a => a.classList.toggle("active", a.dataset.view === view));
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("hidden", v.id !== `view-${view}`));
   $("#pageTitle").textContent = TITLES[view];
-  ({ dashboard: renderDashboard, prospects: renderProspects, add: renderAdd, settings: renderSettings })[view]();
+  if (!sameQuickView) ({ dashboard: renderDashboard, quick: renderQuick, prospects: renderProspects, add: renderAdd, settings: renderSettings })[view]();
+  if (qm && Number(qm[1]) !== Q.id) openQuick(Number(qm[1]));
   if (m && Number(m[1]) !== S.detailId) openDrawer(Number(m[1]));
   else if (!m && S.detailId) closeDrawer();
 }
