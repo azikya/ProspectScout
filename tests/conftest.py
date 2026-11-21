@@ -31,7 +31,24 @@ def site_server():
                 return
             return super().do_HEAD()
 
+        def _send_raw(self, body, encoding=None):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            if encoding:
+                self.send_header("Content-Encoding", encoding)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_GET(self):
+            import gzip as _gzip
+            page = b"<html><head><title>Gzip Co</title></head><body><p>Compressed hello</p></body></html>"
+            if self.path == "/gzipped":
+                return self._send_raw(_gzip.compress(page), "gzip")
+            if self.path == "/gzip-noheader":  # misconfigured servers send gzip bytes without saying so
+                return self._send_raw(_gzip.compress(page))
+            if self.path == "/brotli":
+                return self._send_raw(b"\x8b\x05\x80\x3c\x68\x74\x6d\x6c\x3e\x03", "br")
             if self.path == "/headfail":
                 body = b"<html><body>ok</body></html>"
                 self.send_response(200)

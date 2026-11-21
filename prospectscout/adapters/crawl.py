@@ -16,6 +16,7 @@ import time
 import urllib.error
 import urllib.request
 import urllib.robotparser
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -105,6 +106,25 @@ def _decode(raw: bytes, content_type: str) -> str:
         return raw.decode("cp1252", errors="replace")
 
 
+def _decompress(raw: bytes, encoding: str) -> bytes | None:
+    """Undo gzip/deflate (also gzip sent without a header). Capped at MAX_BYTES so a compressed "bomb"
+    can't exhaust memory. Returns None for encodings we can't read (e.g. brotli)."""
+    enc = (encoding or "").lower().strip()
+    try:
+        if enc in ("gzip", "x-gzip") or raw[:2] == b"\x1f\x8b":
+            return zlib.decompressobj(16 + zlib.MAX_WBITS).decompress(raw, MAX_BYTES)
+        if enc == "deflate":
+            try:
+                return zlib.decompressobj().decompress(raw, MAX_BYTES)
+            except zlib.error:
+                return zlib.decompressobj(-zlib.MAX_WBITS).decompress(raw, MAX_BYTES)
+    except zlib.error:
+        return None
+    if enc in ("", "identity"):
+        return raw
+    return None
+
+
 def _peer_ip(resp) -> str | None:
     """The IP address the connection actually reached (best effort; CPython internals)."""
     try:
@@ -117,7 +137,8 @@ def fetch(url: str, timeout: int = 15, max_bytes: int = MAX_BYTES, allow_private
           method: str = "GET") -> Fetched:
     check_host(url, allow_private)
     opener = guarded_opener(allow_private)
-    req = urllib.request.Request(url, method=method, headers={"User-Agent": UA, "Accept": "text/html,*/*"})
+    req = urllib.request.Request(url, method=method, headers={"User-Agent": UA, "Accept": "text/html,*/*",
+                                                               "Accept-Encoding": "gzip, deflate"})
     t0 = time.perf_counter()
     try:
         with opener.open(req, timeout=timeout) as resp:
@@ -128,8 +149,13 @@ def fetch(url: str, timeout: int = 15, max_bytes: int = MAX_BYTES, allow_private
                     raise FetchError(f"Blocked private or local address ({peer})")
             ctype = resp.headers.get("Content-Type") or ""
             raw = resp.read(max_bytes) if method == "GET" else b""
-            return Fetched(resp.status, resp.geturl(), ctype.lower(), _decode(raw, ctype),
-                           int((time.perf_counter() - t0) * 1000), len(raw))
+            encoding = resp.headers.get("Content-Encoding") or ""
+            body = _decompress(raw, encoding) if raw else raw
+            if body is None:  # e.g. brotli: never parse compressed bytes as if they were text
+                return Fetched(resp.status, resp.geturl(), f"unsupported encoding {encoding.lower()}", "",
+                               int((time.perf_counter() - t0) * 1000), len(raw))
+            return Fetched(resp.status, resp.geturl(), ctype.lower(), _decode(body, ctype),
+                           int((time.perf_counter() - t0) * 1000), len(body))
     except urllib.error.HTTPError as exc:
         return Fetched(exc.code, exc.geturl() or url, (exc.headers.get("Content-Type") or "").lower()
                        if exc.headers else "", "", int((time.perf_counter() - t0) * 1000), 0)

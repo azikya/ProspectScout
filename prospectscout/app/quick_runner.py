@@ -85,7 +85,7 @@ class QuickRunner:
                 settings = self.settings_loader()
                 with self._lock:
                     self._live[qid]["steps"].append("Reading the website")
-                result = self.crawl_fn(website, max_pages=3, max_link_checks=0, deep=False, delay=0.2)
+                result = self.crawl_fn(website, max_pages=2, max_link_checks=0, deep=False, delay=0)
                 snapshot = self._snapshot(result)
                 public = {k: v for k, v in snapshot.items() if k != "text"}
                 self._set(qid, snapshot=public)

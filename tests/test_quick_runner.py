@@ -56,7 +56,7 @@ def test_happy_path_streams_and_stores(path):
     got = db.get_quick(conn, qid)
     assert got["status"] == "done" and got["markdown"] == ANSWER and got["verdict_json"]["label"] == "worth"
     assert got["url"] == "https://www.healthwaresystems.com" and got["domain"] == "healthwaresystems.com"
-    assert seen[0]["max_pages"] == 3 and seen[0]["max_link_checks"] == 0 and seen[0]["deep"] is False
+    assert seen[0]["max_pages"] == 2 and seen[0]["max_link_checks"] == 0 and seen[0]["deep"] is False
     assert "HealthWare Systems" in prompts[0] and "AI automation for healthcare" in prompts[0]
 
 
