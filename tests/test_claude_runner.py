@@ -113,3 +113,34 @@ def test_test_connection_reports_failure_in_plain_english(monkeypatch):
     monkeypatch.setattr(claude_runner, "claude_argv", lambda: None)
     res = claude_runner.test_connection()
     assert res["ok"] is False and "Claude Code" in res["message"]
+
+
+# --- streaming (Quick Prospect) ------------------------------------------------------------
+
+def test_stream_argv_flags():
+    a = claude_runner.build_stream_argv(["claude"], ["WebSearch", "WebFetch"], None)
+    for f in ("stream-json", "--verbose", "--include-partial-messages", "--safe-mode", "--no-session-persistence"):
+        assert f in a
+    assert a[a.index("--allowedTools") + 1] == "WebSearch,WebFetch" and "--bare" not in a
+
+
+def test_stream_llm_emits_text_and_steps(fake_mode):
+    fake_mode("stream_ok")
+    texts, steps = [], []
+    final = claude_runner.stream_llm("hi", ["WebSearch"], on_text=texts.append, on_step=lambda n, i: steps.append((n, i)))
+    assert "".join(texts) == final == "## First look\nHello\n\n## Verdict\nworld"
+    assert steps == [("WebSearch", {"query": "q"})]
+
+
+def test_stream_llm_usage_limit(fake_mode):
+    fake_mode("stream_usage")
+    with pytest.raises(LLMError) as e:
+        claude_runner.stream_llm("hi", [], on_text=lambda t: None, on_step=lambda n, i: None)
+    assert e.value.kind == "usage_limit"
+
+
+def test_stream_llm_not_installed(monkeypatch):
+    monkeypatch.setattr(claude_runner, "claude_argv", lambda: None)
+    with pytest.raises(LLMError) as e:
+        claude_runner.stream_llm("hi", [], on_text=lambda t: None, on_step=lambda n, i: None)
+    assert e.value.kind == "not_installed"

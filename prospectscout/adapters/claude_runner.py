@@ -161,6 +161,86 @@ def run_llm(prompt: str, schema: dict | None = None, tools: list[str] | None = N
                      duration_ms=int(dur) if isinstance(dur, (int, float)) else None)
 
 
+def build_stream_argv(base: list[str], tools: list[str], model: str | None, safe_mode: bool = True) -> list[str]:
+    argv = [*base, "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
+    argv += ["--safe-mode"] if safe_mode else ["--setting-sources", "", "--strict-mcp-config"]
+    argv += ["--no-session-persistence", "--tools", ",".join(tools)]
+    if tools:
+        argv += ["--allowedTools", ",".join(tools)]
+    if model:
+        argv += ["--model", model]
+    return argv
+
+
+def stream_llm(prompt: str, tools: list[str], on_text, on_step, model: str | None = None,
+               timeout: int = 600) -> str:
+    """Run Claude Code with streamed output. Calls on_text(chunk) as words arrive and on_step(name, input)
+    for each tool use (web search/fetch). Returns the full streamed text. Raises LLMError like run_llm."""
+    import threading
+
+    base = claude_argv()
+    if not base:
+        raise LLMError("not_installed", "Claude Code isn't installed or isn't on PATH.")
+    work = os.path.join(config.home_dir(), "work")
+    os.makedirs(work, exist_ok=True)
+    tools = list(tools or [])
+
+    def attempt(safe_mode: bool):
+        try:
+            proc = subprocess.Popen(build_stream_argv(base, tools, model, safe_mode), stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                                    errors="replace", cwd=work, bufsize=1)
+        except OSError as exc:
+            raise LLMError("not_installed", f"Couldn't start Claude Code: {exc}") from exc
+        timer = threading.Timer(timeout, proc.kill)
+        timer.start()
+        parts: list[str] = []
+        result: dict = {}
+        try:
+            proc.stdin.write(prompt)
+            proc.stdin.close()
+            for line in proc.stdout:
+                try:
+                    ev = json.loads(line)
+                except ValueError:
+                    continue
+                kind = ev.get("type")
+                if kind == "stream_event":
+                    e = ev.get("event") or {}
+                    if e.get("type") == "content_block_start" and (e.get("content_block") or {}).get("type") == "text":
+                        if parts and not "".join(parts).endswith("\n\n"):
+                            sep = "\n\n" if not "".join(parts).endswith("\n") else "\n"
+                            parts.append(sep)
+                            on_text(sep)
+                    elif e.get("type") == "content_block_delta":
+                        d = e.get("delta") or {}
+                        if d.get("type") == "text_delta" and d.get("text"):
+                            parts.append(d["text"])
+                            on_text(d["text"])
+                elif kind == "assistant":
+                    for block in (ev.get("message") or {}).get("content") or []:
+                        if block.get("type") == "tool_use":
+                            on_step(block.get("name", ""), block.get("input") or {})
+                elif kind == "result":
+                    result = ev
+            proc.wait()
+        finally:
+            fired = not timer.is_alive() and proc.returncode not in (0, None) and not result
+            timer.cancel()
+        stderr = proc.stderr.read() if proc.stderr else ""
+        return proc, "".join(parts), result, stderr, fired
+
+    proc, text, result, stderr, fired = attempt(True)
+    if proc.returncode != 0 and not text and _UNKNOWN_SAFE_MODE_RE.search(stderr or ""):
+        proc, text, result, stderr, fired = attempt(False)
+    if fired:
+        raise LLMError("timeout", f"Claude didn't finish within {timeout}s.")
+    if result.get("is_error") or (proc.returncode != 0 and not result):
+        detail = str(result.get("result") or stderr.strip() or f"exit code {proc.returncode}")
+        raise LLMError("usage_limit" if _USAGE_RE.search(detail) else "error", detail[:500])
+    return text
+
+
 _PLAIN = {
     "not_installed": "Claude Code isn't installed or isn't on PATH on this computer.",
     "usage_limit": "Your Claude plan's usage limit is reached. Try again after it resets.",
