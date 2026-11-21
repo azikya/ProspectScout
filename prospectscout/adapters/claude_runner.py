@@ -1,0 +1,180 @@
+"""The one place ProspectScout talks to Claude.
+
+Runs the locally installed, signed-in Claude Code CLI in headless mode
+(``claude -p``), so calls use the user's Claude subscription. Swapping in an
+Anthropic API backend later means replacing ``run_llm`` with the same signature.
+
+Rules (see the design spec):
+- prompt always goes on stdin (Windows batch wrappers truncate multi-line args);
+- ``--safe-mode`` keeps plugins/hooks/CLAUDE.md out while keeping OAuth;
+  ``--bare`` is never used because it disables subscription auth;
+- successful answers are never keyword-scanned (that rejected real answers in UpworkScout).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import subprocess
+from dataclasses import dataclass
+
+from .. import config
+
+_USAGE_RE = re.compile(r"usage limit|limit reached|rate.?limit", re.I)
+_UNKNOWN_SAFE_MODE_RE = re.compile(r"unknown option.*--safe-mode", re.I)
+
+
+class LLMError(Exception):
+    """kind: not_installed | usage_limit | timeout | error | bad_output"""
+
+    def __init__(self, kind: str, message: str):
+        super().__init__(message)
+        self.kind = kind
+
+
+@dataclass
+class LLMResult:
+    text: str
+    data: dict | None
+    cost_usd: float | None
+    duration_ms: int | None
+
+
+def claude_cli() -> str | None:
+    return shutil.which("claude") or shutil.which("claude.cmd")
+
+
+def claude_argv() -> list[str] | None:
+    """How to invoke Claude Code on this machine, or None if it isn't installed.
+    On Windows `claude` may be a .cmd wrapper; run its cli.js through node instead."""
+    path = claude_cli()
+    if not path:
+        return None
+    if path.lower().endswith((".cmd", ".bat", ".ps1")):
+        base = os.path.dirname(path)
+        node = shutil.which("node")
+        for cli in (os.path.join(base, "node_modules", "@anthropic-ai", "claude-code", "cli.js"),
+                    os.path.join(base, "node_modules", "@anthropic-ai", "claude-code", "cli.mjs")):
+            if node and os.path.exists(cli):
+                return [node, cli]
+        exe = os.path.splitext(path)[0] + ".exe"
+        if os.path.exists(exe):
+            return [exe]
+    return [path]
+
+
+def build_argv(base: list[str], schema: dict | None, tools: list[str], model: str | None,
+               safe_mode: bool = True) -> list[str]:
+    argv = [*base, "-p", "--output-format", "json"]
+    if safe_mode:
+        argv.append("--safe-mode")
+    else:
+        argv += ["--setting-sources", "", "--strict-mcp-config"]
+    argv += ["--no-session-persistence", "--tools", ",".join(tools)]
+    if tools:
+        argv += ["--allowedTools", ",".join(tools)]
+    if schema is not None:
+        argv += ["--json-schema", json.dumps(schema, separators=(",", ":"))]
+    if model:
+        argv += ["--model", model]
+    return argv
+
+
+def _first_json_object(text: str) -> dict | None:
+    start = text.find("{")
+    while start != -1:
+        depth, in_str, esc = 0, False, False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+            elif ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        obj = json.loads(text[start:i + 1])
+                        return obj if isinstance(obj, dict) else None
+                    except ValueError:
+                        break
+        start = text.find("{", start + 1)
+    return None
+
+
+def _invoke(argv: list[str], prompt: str, timeout: int, cwd: str) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(argv, input=prompt, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=timeout, cwd=cwd)
+    except subprocess.TimeoutExpired as exc:
+        raise LLMError("timeout", f"Claude didn't answer within {timeout}s.") from exc
+    except OSError as exc:
+        raise LLMError("not_installed", f"Couldn't start Claude Code: {exc}") from exc
+
+
+def run_llm(prompt: str, schema: dict | None = None, tools: list[str] | None = None,
+            model: str | None = None, timeout: int = 300) -> LLMResult:
+    base = claude_argv()
+    if not base:
+        raise LLMError("not_installed", "Claude Code isn't installed or isn't on PATH.")
+    tools = list(tools or [])
+    work = os.path.join(config.home_dir(), "work")
+    os.makedirs(work, exist_ok=True)
+
+    proc = _invoke(build_argv(base, schema, tools, model), prompt, timeout, work)
+    if proc.returncode != 0 and _UNKNOWN_SAFE_MODE_RE.search(proc.stderr or ""):
+        proc = _invoke(build_argv(base, schema, tools, model, safe_mode=False), prompt, timeout, work)
+
+    stdout = (proc.stdout or "").strip()
+    try:
+        payload = json.loads(stdout) if stdout else {}
+    except ValueError:
+        payload = {"result": stdout, "is_error": proc.returncode != 0}
+    if not isinstance(payload, dict):
+        payload = {"result": stdout}
+    text = str(payload.get("result") or "")
+
+    if payload.get("is_error") or proc.returncode != 0:
+        detail = text or (proc.stderr or "").strip() or f"exit code {proc.returncode}"
+        kind = "usage_limit" if _USAGE_RE.search(detail) else "error"
+        raise LLMError(kind, detail[:500])
+
+    data = payload.get("structured_output")
+    if not isinstance(data, dict):
+        data = _first_json_object(text) if schema is not None else None
+    if schema is not None and not isinstance(data, dict):
+        raise LLMError("bad_output", "Claude's answer didn't contain the expected JSON.")
+
+    cost = payload.get("total_cost_usd")
+    dur = payload.get("duration_ms")
+    return LLMResult(text=text, data=data,
+                     cost_usd=float(cost) if isinstance(cost, (int, float)) else None,
+                     duration_ms=int(dur) if isinstance(dur, (int, float)) else None)
+
+
+_PLAIN = {
+    "not_installed": "Claude Code isn't installed or isn't on PATH on this computer.",
+    "usage_limit": "Your Claude plan's usage limit is reached. Try again after it resets.",
+    "timeout": "Claude Code didn't answer in time. Check your internet connection.",
+    "bad_output": "Claude Code answered, but not in the expected format.",
+}
+
+
+def test_connection() -> dict:
+    schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
+    try:
+        res = run_llm('Reply with {"ok": true}', schema=schema, tools=[], timeout=120)
+    except LLMError as exc:
+        msg = _PLAIN.get(exc.kind) or f"Claude Code returned an error: {exc}"
+        return {"ok": False, "message": msg}
+    ok = bool(res.data and res.data.get("ok"))
+    return {"ok": ok, "message": "Claude is connected and ready." if ok else "Claude answered unexpectedly."}

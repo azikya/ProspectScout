@@ -1,0 +1,1 @@
+{"lighthouseResult":{"categories":{"performance":{"score":0.42},"seo":{"score":0.9},"accessibility":{"score":0.8}},"audits":{"largest-contentful-paint":{"numericValue":5200},"cumulative-layout-shift":{"numericValue":0.3}}}}

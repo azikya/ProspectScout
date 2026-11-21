@@ -1,0 +1,20 @@
+[project]
+name = "prospectscout"
+version = "0.1.0"
+description = "Website-audit prospecting assistant: finds real opportunities on a prospect's site and writes outreach that earns replies."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["openpyxl>=3.1", "tzdata>=2024.1", "phonenumbers>=8.13"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+prospectscout = "prospectscout.app.server:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"

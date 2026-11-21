@@ -1,0 +1,166 @@
+{
+  "fit": "strong",
+  "score": 82,
+  "summary": "Growing Austin freight company with a broken quote link and no online tracking; competitors offer both.",
+  "skip_reason": "",
+  "company": {
+    "name": "Acme Logistics",
+    "industry": "Logistics",
+    "country": "USA",
+    "city": "Austin",
+    "size_hint": "small (10-50)"
+  },
+  "findings": [
+    {
+      "id": "O1",
+      "type": "broken",
+      "title": "Broken 'Get a Quote' link",
+      "evidence": "https://acme.com/quote returns 404",
+      "fact_ids": [
+        "F3"
+      ],
+      "business_impact": "Visitors who want a quote hit a dead end, so leads are lost.",
+      "our_solution": "Fix the link and add a proper quote form that emails the team and logs the lead.",
+      "complexity": "S",
+      "priority": 1
+    },
+    {
+      "id": "O2",
+      "type": "growth",
+      "title": "No online shipment tracking",
+      "evidence": "No tracking or customer login found on the site",
+      "fact_ids": [],
+      "business_impact": "Customers call the office for updates, which costs staff time.",
+      "our_solution": "Customer portal with live load status.",
+      "complexity": "M",
+      "priority": 2
+    },
+    {
+      "id": "O3",
+      "type": "competitor_gap",
+      "title": "Competitors offer online quotes and tracking",
+      "evidence": "FastFreight and ShipRight both show tracking pages",
+      "fact_ids": [],
+      "business_impact": "Shoppers comparing carriers may pick the one that is easier online.",
+      "our_solution": "Quote + tracking portal; optional AI assistant for quote questions.",
+      "complexity": "M",
+      "priority": 3
+    }
+  ],
+  "buying_intent": {
+    "level": "medium",
+    "signals": [
+      {
+        "signal": "Hiring operations coordinators",
+        "evidence": "Careers page lists 2 open roles",
+        "source_url": "https://acme.com/careers",
+        "sop_type": "none"
+      }
+    ]
+  },
+  "competitors": [
+    {
+      "name": "FastFreight",
+      "url": "https://fastfreight.example",
+      "features": [
+        {
+          "feature": "Online tracking",
+          "has": true,
+          "source_url": "https://fastfreight.example/track"
+        }
+      ]
+    },
+    {
+      "name": "ShipRight",
+      "url": "https://shipright.example",
+      "features": [
+        {
+          "feature": "Online tracking",
+          "has": true,
+          "source_url": "https://shipright.example/tracking"
+        }
+      ]
+    }
+  ],
+  "timezone_hint": {
+    "country": "USA",
+    "city": "Austin",
+    "iana": "America/Chicago"
+  },
+  "services_to_pitch": [
+    "Web development",
+    "Custom software development",
+    "AI & automation"
+  ],
+  "opener_finding_id": "O1",
+  "followup_finding_ids": [
+    "O2",
+    "O3"
+  ],
+  "messages": {
+    "linkedin_note": "Hi Sarah, I went through acmelogistics.com and noticed your Get a Quote link leads to a missing page, plus one thing your competitors offer that you don't yet. I put together a free 1-page review with ideas. Want me to send it?",
+    "linkedin_after_accept": "Thanks for connecting, Sarah. As mentioned, I reviewed acmelogistics.com and put together a short 1-page review: the broken quote link plus two ideas to win more online bookings. Happy to share it here. Would that be useful?",
+    "email_subject": "Something I noticed on acmelogistics.com",
+    "email_body": "Hi Sarah,\n\nI spent some time on acmelogistics.com this morning. The Get a Quote link on your homepage leads to a page that no longer exists, so anyone trying to request a quote hits a dead end. I also spotted a couple of other things that could bring in more bookings.\n\nI've put together a free 1-page review with ideas for each. Want me to send it over?",
+    "whatsapp": "Hi Sarah, I was looking at acmelogistics.com and noticed the Get a Quote link goes to a missing page, so quote requests may be getting lost. I wrote up a free 1-page review with a few ideas. Want me to send it?",
+    "report_delivery": "Hi Sarah, here's the 1-page review of acmelogistics.com I mentioned. The quick win is the broken quote link; the bigger opportunity is online load tracking. If it's useful, I'd be glad to walk you through it on a 15-minute call. We can talk through scope and timing on a call or at our next meeting, and we'll plan it around your budget.",
+    "followup_1": "Hi Sarah, one more thing from my review: customers can't track a shipment on your site, which usually means extra calls to your team. Still happy to send the full 1-page review if it helps.",
+    "followup_2": "Hi Sarah, FastFreight and ShipRight both let customers request quotes and track loads online. An AI assistant could also answer common quote questions around the clock. Worth a quick look?",
+    "followup_3": "Hi Sarah, I don't want to clutter your inbox. Should I close the file on this, or would the review still be useful?"
+  },
+  "report": {
+    "headline": "Three ways acmelogistics.com could win more freight bookings",
+    "whats_working": [
+      "Clear description of your Texas freight services",
+      "Phone number easy to find"
+    ],
+    "opportunities": [
+      {
+        "title": "Fix the broken Get a Quote link",
+        "why_it_matters": "Every visitor ready to request a quote currently hits a dead end.",
+        "finding_id": "O1"
+      },
+      {
+        "title": "Let customers track loads online",
+        "why_it_matters": "Fewer status calls for your team and a more modern experience for shippers.",
+        "finding_id": "O2"
+      },
+      {
+        "title": "Match competitors on online quotes",
+        "why_it_matters": "Shippers comparing carriers often choose the easiest one to deal with online.",
+        "finding_id": "O3"
+      }
+    ],
+    "comparison": [
+      {
+        "feature": "Contact form",
+        "prospect_has": true,
+        "prospect_fact_id": "F1",
+        "competitors": [
+          {
+            "name": "FastFreight",
+            "has": true
+          },
+          {
+            "name": "ShipRight",
+            "has": true
+          }
+        ]
+      }
+    ]
+  },
+  "call_prep": {
+    "angle": "COO: operational efficiency and fewer manual status calls.",
+    "questions": [
+      "How do quote requests reach your team today?",
+      "How many status calls do you get per week?"
+    ],
+    "objections": [
+      {
+        "objection": "We're too busy right now.",
+        "response": "Start with the quick quote-link fix; the portal can wait."
+      }
+    ],
+    "notes": "Owner-operated; expanding to more Texas routes."
+  }
+}
